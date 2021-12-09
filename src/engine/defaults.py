@@ -28,7 +28,7 @@ from detectron2.utils.logger import setup_logger
 
 import argparse
 import logging
-import os
+import os, time
 from collections import OrderedDict
 
 from ..data import build_detection_train_loader, PairDataLoader
@@ -278,7 +278,16 @@ class DefaultTrainer(SimpleTrainer):
         # Assume these objects must be constructed in this order.
         model = self.build_model(cfg)
         optimizer = self.build_optimizer(cfg, model)
-        data_loader = self.build_train_loader(cfg)
+        
+        self.cross_domain = cfg.DATASETS.CROSS_DOMAIN
+        if self.cross_domain:
+            data_loader_source = self.build_train_loader(cfg, domain='source')
+            data_loader_target = self.build_train_loader(cfg, domain='target')
+
+            self.data_loader_target = data_loader_target
+            self._data_loader_iter_target = iter(data_loader_target)
+        else:
+            data_loader = self.build_train_loader(cfg)
 
         # For training, wrap with DDP. But don't need this for inference.
         if comm.get_world_size() > 1:
@@ -287,7 +296,11 @@ class DefaultTrainer(SimpleTrainer):
                 device_ids=[comm.get_local_rank()],
                 broadcast_buffers=False,
             )
-        super().__init__(model, data_loader, optimizer)
+
+        if self.cross_domain:
+            super().__init__(model, data_loader_source, optimizer)
+        else:
+            super().__init__(model, data_loader, optimizer)
 
         self.scheduler = self.build_lr_scheduler(cfg, optimizer)
         # Assume no other objects need to be checkpointed.
@@ -304,6 +317,52 @@ class DefaultTrainer(SimpleTrainer):
         self.cfg = cfg
 
         self.register_hooks(self.build_hooks())
+    
+
+    def run_step(self):
+        """
+        Overwrite run_step from parent for UDA training logic
+        """
+        loss_dict = {}
+
+        assert (
+            self.model.training
+        ), "[DefaultTrainer] model was changed to eval mode!"
+
+        start = time.perf_counter()
+
+        if self.cross_domain:
+            data_source = next(self._data_loader_iter)
+            data_target = next(self._data_loader_iter_target)
+            data_time = time.perf_counter() - start
+
+            loss_dict_source = self.model(data_source, domain='source')
+            loss_dict_target = self.model(data_target, domain='target')
+            losses = sum(loss_dict_source.values()) + sum(loss_dict_target.values())
+
+            for k in loss_dict_source.keys():
+                loss_dict['{}'.format(k)] = loss_dict_source[k]
+            for k in loss_dict_target.keys():
+                loss_dict['{}_target'.format(k)] = loss_dict_target[k]
+        else:
+            data = next(self._data_loader_iter)
+            data_time = time.perf_counter() - start
+
+            loss_dict_source = self.model(data)
+            losses = sum(loss_dict_source.values())
+            for k in loss_dict_source:
+                loss_dict['{}'.format(k)] = loss_dict_source[k]
+
+
+        self.optimizer.zero_grad()
+        losses.backward()
+
+
+        self._write_metrics(loss_dict, data_time)
+
+        self.optimizer.step()
+
+
 
     def resume_or_load(self, resume=True):
         """
@@ -455,16 +514,18 @@ class DefaultTrainer(SimpleTrainer):
         return build_lr_scheduler(cfg, optimizer)
 
     @classmethod
-    def build_train_loader(cls, cfg):
+    def build_train_loader(cls, cfg, domain='source'):
         """
         Returns:
             iterable
 
-        It now calls :func:`detectron2.data.build_detection_train_loader`.
+        Default calls :func:`detectron2.data.build_detection_train_loader`.
         Overwrite it if you'd like a different data loader.
+
+        Now calls src.data.buid.build_detection_train_loader
         """
 
-        dataloader = build_detection_train_loader(cfg)
+        dataloader = build_detection_train_loader(cfg, mapper=None, domain=domain)
         if cfg.DATALOADER.SAMPLER_TRAIN == "PairTrainingSampler":
             dataloader = PairDataLoader(cfg, dataloader)
         return dataloader
@@ -487,6 +548,9 @@ class DefaultTrainer(SimpleTrainer):
             DatasetEvaluator or None
 
         It is not implemented by default.
+
+        #Note: It is implemented in child train_net/Trainer
+
         """
         raise NotImplementedError(
             """

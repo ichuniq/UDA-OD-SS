@@ -7,8 +7,9 @@ from detectron2.data import DatasetCatalog
 from .coco import register_coco_instances  # use customized data register
 
 __all__ = [
-    "register_all_bdd_tracking",
-    "register_all_waymo",
+    # "register_all_bdd_tracking",
+    # "register_all_waymo",
+    "register_all_cityscape",
 ]
 
 
@@ -17,7 +18,7 @@ def load_json(filename):
         reg_file = json.load(fp)
     return reg_file
 
-
+"""
 # ==== Predefined datasets and splits for BDD100K ==========
 # BDD100K MOT set domain splits.
 _PREDEFINED_SPLITS_BDDT = {
@@ -132,3 +133,23 @@ def register_all_waymo(root='datasets'):
                 register_coco_instances(name, metadata,
                                         os.path.join(root, label_file),
                                         os.path.join(root, img_dir))
+"""
+
+# ========= Predefined datasets and splits for Cityscapes ==========
+_PREDEFINED_SPLITS_CITYSCAPES = {"cityscapes": {}}
+_PREDEFINED_SPLITS_CITYSCAPES['cityscapes']['cityscapes_train'] = ('Cityscapes/leftImg8bit/train', 'Cityscapes/cocoAnnotations/cityscapes_train_cocostyle.json')
+# _PREDEFINED_SPLITS_CITYSCAPES['cityscapes']['cityscapes_val'] = ('Cityscapes/leftImg8bit/val', 'Cityscapes/cocoAnnotations/cityscapes_val_cocostyle.json')
+_PREDEFINED_SPLITS_CITYSCAPES['cityscapes']['cityscapes_foggy_train'] = ('Cityscapes/leftImg8bit_foggy/train', 'Cityscapes/cocoAnnotations/cityscapes_foggy_train_cocostyle.json')
+_PREDEFINED_SPLITS_CITYSCAPES['cityscapes']['cityscapes_foggy_val'] = ('Cityscapes/leftImg8bit_foggy/val', 'Cityscapes/cocoAnnotations/cityscapes_foggy_val_cocostyle.json')
+
+
+def register_all_cityscape(root='/scratch2/users/carl/Datasets'):
+    thing_classes = ['person', 'car', 'train', 'rider', 'truck', 'motorcycle', 'bicycle', 'bus']
+    metadata = {"thing_classes": thing_classes}
+    for d in [_PREDEFINED_SPLITS_CITYSCAPES]:
+        for key, value in d.items():
+            for name, (img_dir, label_file) in value.items():
+                register_coco_instances(name, metadata,
+                                        os.path.join(root, label_file),
+                                        os.path.join(root, img_dir))
+

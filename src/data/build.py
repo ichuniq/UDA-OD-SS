@@ -40,7 +40,7 @@ __all__ = [
 ]
 
 
-def build_detection_train_loader(cfg, mapper=None):
+def build_detection_train_loader(cfg, mapper=None, domain='source'):
     """
     A data loader is created by the following steps:
     1. Use the dataset names in config to query :class:`DatasetCatalog`, and obtain a list of dicts.
@@ -71,8 +71,14 @@ def build_detection_train_loader(cfg, mapper=None):
     )
     images_per_worker = images_per_batch // num_workers
 
+    if cfg.DATASETS.CROSS_DOMAIN:
+        dataset_train = cfg.DATASETS.TRAIN_SOURCE if domain =='source' else cfg.DATASETS.TRAIN_TARGET
+    else:
+        dataset_train = cfg.DATASETS.TRAIN
+    
     dataset_dicts = get_detection_dataset_dicts(
-        cfg.DATASETS.TRAIN,
+        # cfg.DATASETS.TRAIN,
+        dataset_train,
         filter_empty=cfg.DATALOADER.FILTER_EMPTY_ANNOTATIONS,
         min_keypoints=cfg.MODEL.ROI_KEYPOINT_HEAD.MIN_KEYPOINTS_PER_IMAGE
         if cfg.MODEL.KEYPOINT_ON
@@ -82,12 +88,20 @@ def build_detection_train_loader(cfg, mapper=None):
         else None,
     )
     dataset = DatasetFromList(dataset_dicts, copy=False)
+    # print("check dataset")
+    # d=dataset[0]
+    # print(d.keys())
+    # print("====================")
     if mapper is None:
         mapper = DatasetMapper(cfg, True)
     dataset = MapDataset(dataset, mapper)
+    # print("check dataset after mapping")
     # d=dataset[0]
+    # print(d.keys())
+    # print("====================")
     # print(d)
     # print(d['image'].size())
+    
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
     logger = logging.getLogger(__name__)
     logger.info("Using training sampler {}".format(sampler_name))

@@ -65,10 +65,14 @@ class SSRCNN(nn.Module):
         )
         self.normalizer = lambda x: (x - pixel_mean) / pixel_std
 
-    def forward(self, batched_inputs):
+    def forward(self, batched_inputs, domain='source'):
         """
         Training methods, which jointly train the detector and the
         self-supervised task.
+
+        For UDA settings, calculate detection loss and self-supervised 
+        loss for the source domain, and only with the self-supervised 
+        loss on the target domain
         """
         if not self.training:
             return self.inference(batched_inputs)
@@ -90,53 +94,61 @@ class SSRCNN(nn.Module):
                 "num": len(tar),
             }
 
-        # for detection part
-        images = self.preprocess_image(batched_inputs)
-        if "instances" in batched_inputs[0]:
-            gt_instances = [
-                x["instances"].to(self.device) for x in batched_inputs
-            ]
-        else:
-            gt_instances = None
-        # print(images.tensor.size(), images.image_sizes)
-        features = self.backbone(images.tensor)
-        # print(features['p2'].size(),features['p3'].size(), features['p4'].size(), features['p5'].size(), features['p6'].size())
-        if self.proposal_generator:
-            proposals, proposal_losses = self.proposal_generator(
-                images, features, gt_instances
+        if domain == 'source':
+            # for detection part
+            images = self.preprocess_image(batched_inputs)
+            if "instances" in batched_inputs[0]:
+                gt_instances = [
+                    x["instances"].to(self.device) for x in batched_inputs
+                ]
+            else:
+                gt_instances = None
+            # print(images.tensor.size(), images.image_sizes)
+            features = self.backbone(images.tensor)
+            # print(features['p2'].size(),features['p3'].size(), features['p4'].size(), features['p5'].size(), features['p6'].size())
+            if self.proposal_generator:
+                proposals, proposal_losses = self.proposal_generator(
+                    images, features, gt_instances
+                )
+            else:
+                assert "proposals" in batched_inputs[0]
+                proposals = [
+                    x["proposals"].to(self.device) for x in batched_inputs
+                ]
+                proposal_losses = {}
+            # print(len(proposals), proposals[0])
+
+            _, detector_losses = self.roi_heads(
+                images, features, proposals, gt_instances
             )
-        else:
-            assert "proposals" in batched_inputs[0]
-            proposals = [
-                x["proposals"].to(self.device) for x in batched_inputs
-            ]
-            proposal_losses = {}
-        # print(len(proposals), proposals[0])
 
-        _, detector_losses = self.roi_heads(
-            images, features, proposals, gt_instances
-        )
+            if isinstance(detector_losses, tuple):
+                detector_losses, box_features = detector_losses
 
-        if isinstance(detector_losses, tuple):
-            detector_losses, box_features = detector_losses
+                for i in range(len(self.ss_head)):
+                    head = getattr(self, "ss_head_{}".format(i))
+                    # print("====================")
+                    # print("head: {}".format(head))
+                    # print("====================")
+                    if head.input != "ROI":
+                        continue
+                    # during training, the paired of inputs are put in one batch
+                    ss_losses, acc = head(box_features)
+                    losses.update(ss_losses)
+                    accuracies["accuracy_ss_{}".format(head.name)] = {
+                        "accuracy": acc,
+                        "num": 1,
+                    }
 
-            for i in range(len(self.ss_head)):
-                head = getattr(self, "ss_head_{}".format(i))
-                if head.input != "ROI":
-                    continue
-                # during training, the paired of inputs are put in one batch
-                ss_losses, acc = head(box_features)
-                losses.update(ss_losses)
-                accuracies["accuracy_ss_{}".format(head.name)] = {
-                    "accuracy": acc,
-                    "num": 1,
-                }
-
-        losses.update(detector_losses)
-        losses.update(proposal_losses)
+            losses.update(detector_losses)
+            losses.update(proposal_losses)
 
         for k, v in losses.items():
-            assert math.isnan(v) == False, batched_inputs
+            try:
+                assert math.isnan(v) == False, batched_inputs 
+            except AssertionError as msg:
+                print(f'{v} is nan? {math.isnan(v)}')
+
 
         return losses
 

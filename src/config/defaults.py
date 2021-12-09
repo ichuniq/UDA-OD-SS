@@ -74,3 +74,11 @@ _C.MODEL.SS.BATCH_SIZE = 32
 # _C.CONST.TOPK = 1
 # _C.CONST.STEP = 1
 
+# -----------------------------------------------------------------------------
+# Dataset settings for Unsupervised Domain Adaptation
+# -----------------------------------------------------------------------------
+# _C.DATASETS = CN()
+_C.DATASETS.CROSS_DOMAIN = False
+_C.DATASETS.TRAIN = ()
+_C.DATASETS.TRAIN_SOURCE = ()
+_C.DATASETS.TRAIN_TARGET = ()
