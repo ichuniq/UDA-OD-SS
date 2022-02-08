@@ -11,6 +11,9 @@ def build_ss_head(cfg, input_shape=None):
     """
     Build a backbone from `cfg.MODEL.BACKBONE.NAME`.
 
+    Args:
+        input_shape: {name: ShapeSpec(c, h, w, stride)}
+    
     Returns:
         an instance of :class:`Backbone`
     """

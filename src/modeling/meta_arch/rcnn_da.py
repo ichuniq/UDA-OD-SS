@@ -7,24 +7,23 @@ from detectron2.modeling.backbone import build_backbone
 from detectron2.modeling.meta_arch import META_ARCH_REGISTRY
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
-
 from detectron2.modeling.roi_heads import build_roi_heads
+
 from detectron2.structures import ImageList
 from detectron2.utils.logger import log_first_n
 
 import logging
 import math
 
-from ..self_supervised import build_ss_head
-#from ..roi_heads import build_roi_heads
+from ..domain_alignment import build_da_head
 
-__all__ = ["SSRCNN"]
+__all__ = ["DARCNN"]
 
 
 @META_ARCH_REGISTRY.register()
-class SSRCNN(nn.Module):
+class DARCNN(nn.Module):
     """
-    Detection + self-supervised
+    Cross-domain detection
     """
 
     def __init__(self, cfg):
@@ -37,20 +36,12 @@ class SSRCNN(nn.Module):
         )
         self.from_config(cfg)
         self.roi_heads = build_roi_heads(cfg, self.backbone.output_shape())
-        self.ss_head = build_ss_head(
-            # cfg, self.backbone.bottom_up.output_shape()   # for Res-FPN
-            cfg, self.backbone.output_shape()
-        )
 
-        for i in range(len(self.ss_head)):
-            setattr(self, "ss_head_{}".format(i), self.ss_head[i])
+        self.da_img_head = 1
 
         self.to(self.device)
 
     def from_config(self, cfg):
-        # only train/eval the ss branch for debugging.
-        self.ss_only = cfg.MODEL.SS.ONLY
-        self.feat_level = cfg.MODEL.SS.FEAT_LEVEL  # res4
 
         assert len(cfg.MODEL.PIXEL_MEAN) == len(cfg.MODEL.PIXEL_STD)
         num_channels = len(cfg.MODEL.PIXEL_MEAN)
@@ -68,79 +59,49 @@ class SSRCNN(nn.Module):
 
     def forward(self, batched_inputs, domain='source'):
         """
-        Training methods, which jointly train the detector and the
-        self-supervised task.
-
-        For UDA settings, calculate detection loss and self-supervised 
-        loss for the source domain, and only with the self-supervised 
-        loss on the target domain
+        Args:
+            batched_inputs
+            labeled (string, optional): whether has ground-truth label. Default: 'source'
+        Returns:
+            losses
         """
         if not self.training:
             return self.inference(batched_inputs)
+        
         losses = {}
-        accuracies = {}
-        # torch.save(batched_inputs, "inputs.pt")
-        for i in range(len(self.ss_head)):
-            """Using images as the input to SS tasks."""
-            head = getattr(self, "ss_head_{}".format(i))
-            if head.input != "images":
-                continue
-            out, tar, ss_losses = head(
-                # batched_inputs, self.backbone.bottom_up, self.feat_level # for Res-FPN
-                batched_inputs, self.backbone, self.feat_level
-            )  # attach new parameters
-            losses.update(ss_losses)
-            acc = (out.argmax(axis=1) == tar).float().mean().item() * 100
-            accuracies["accuracy_ss_{}".format(head.name)] = {
-                "accuracy": acc,
-                "num": len(tar),
-            }
 
-        if domain == 'source':
-            # for detection part
-            images = self.preprocess_image(batched_inputs)
-            if "instances" in batched_inputs[0]:
-                gt_instances = [
-                    x["instances"].to(self.device) for x in batched_inputs
-                ]
-            else:
-                gt_instances = None
-            # print(images.tensor.size(), images.image_sizes)
-            features = self.backbone(images.tensor)
-            # print(features['p2'].size(),features['p3'].size(), features['p4'].size(), features['p5'].size(), features['p6'].size())
-            if self.proposal_generator:
-                proposals, proposal_losses = self.proposal_generator(
-                    images, features, gt_instances
-                )
-            else:
-                assert "proposals" in batched_inputs[0]
-                proposals = [
-                    x["proposals"].to(self.device) for x in batched_inputs
-                ]
-                proposal_losses = {}
-            # print(len(proposals), proposals[0])
+        # start detection
+        images = self.preprocess_image(batched_inputs)
+        if "instances" in batched_inputs[0] and domain == 'source':
+            gt_instances = [
+                x["instances"].to(self.device) for x in batched_inputs
+            ]
+        else:
+            gt_instances = None
+        # print(images.tensor.size(), images.image_sizes)
 
-            _, detector_losses = self.roi_heads(
-                images, features, proposals, gt_instances
+        features = self.backbone(images.tensor)
+        # print(features['res4'].size())
+
+        if self.proposal_generator is not None:
+            proposals, proposal_losses = self.proposal_generator(
+                images, features, gt_instances, domain=='source'
             )
+        else:
+            assert "proposals" in batched_inputs[0]
+            proposals = [
+                x["proposals"].to(self.device) for x in batched_inputs
+            ]
+            proposal_losses = {}
+        # print(len(proposals), proposals[0])
 
-            if isinstance(detector_losses, tuple):
-                detector_losses, box_features = detector_losses
+        _, detector_losses = self.roi_heads(
+            images, features, proposals, gt_instances, domain=='source'
+        )
 
-                for i in range(len(self.ss_head)):
-                    head = getattr(self, "ss_head_{}".format(i))
-                    if head.input != "ROI":
-                        continue
-                    # during training, the paired of inputs are put in one batch
-                    ss_losses, acc = head(box_features)
-                    losses.update(ss_losses)
-                    accuracies["accuracy_ss_{}".format(head.name)] = {
-                        "accuracy": acc,
-                        "num": 1,
-                    }
+        losses.update(detector_losses)
+        losses.update(proposal_losses)
 
-            losses.update(detector_losses)
-            losses.update(proposal_losses)
 
         for k, v in losses.items():
             try:
