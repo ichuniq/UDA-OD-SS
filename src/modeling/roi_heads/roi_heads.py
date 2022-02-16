@@ -1,6 +1,6 @@
 import torch
 from typing import List, Dict
-from detectron2.structures import Instances
+from detectron2.structures import Boxes, Instances
 from detectron2.modeling.roi_heads import (
     ROI_HEADS_REGISTRY,
     Res5ROIHeads,
@@ -155,7 +155,7 @@ class TLStandardROIHeads(StandardROIHeads):
 
         if self.training:
             if labeled:
-                outputs, losses = self._forward_box(features, proposals)
+                losses = self._forward_box(features, proposals)
                 # Usually the original proposals used by the box head are used by the mask, keypoint
                 # heads. But when `self.train_on_pred_boxes is True`, proposals will contain boxes
                 # predicted by the box head.
@@ -163,7 +163,7 @@ class TLStandardROIHeads(StandardROIHeads):
                 losses.update(self._forward_keypoint(features, proposals))
             else:
                 losses = {}
-            return outputs, losses
+            return proposals, losses
         else:
             pred_instances = self._forward_box(features, proposals)
             # During inference cascaded prediction is used: the mask and keypoints heads are only
@@ -201,11 +201,11 @@ class TLStandardROIHeads(StandardROIHeads):
                     )
                     for proposals_per_image, pred_boxes_per_image in zip(proposals, pred_boxes):
                         proposals_per_image.proposal_boxes = Boxes(pred_boxes_per_image)
-            outputs = {
-                'predictions': predictions[0],
-                'box_features': box_features
-            }
-            return outputs, losses
+            # outputs = {
+            #     'predictions': predictions[0],
+            #     'box_features': box_features
+            # }
+            return losses #outputs, losses
         else:
             pred_instances, _ = self.box_predictor.inference(predictions, proposals)
             return pred_instances

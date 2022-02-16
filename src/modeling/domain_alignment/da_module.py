@@ -1,7 +1,9 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-from .grl import GradientScalarLayer
+
+from .da_utils import GradientScalarLayer, FocalLoss
+from fvcore.nn import sigmoid_focal_loss, sigmoid_focal_loss_jit
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -41,9 +43,10 @@ class netD_pixel(nn.Module):
 
 class netD(nn.Module):
     """ Global (weak) domain classifier """
-    def __init__(self, context=False):
+    def __init__(self, cin, context=False):
         super(netD, self).__init__()
-        self.conv1 = conv3x3(512, 512, stride=2)
+        #self.conv1 = conv3x3(512, 512, stride=2)
+        self.conv1 = conv3x3(cin, 512, stride=2)
         self.bn1 = nn.BatchNorm2d(512)
         self.conv2 = conv3x3(512, 128, stride=2)
         self.bn2 = nn.BatchNorm2d(128)
@@ -69,18 +72,44 @@ class netD(nn.Module):
 
 class DAImgModule(torch.nn.Module):
     """
-    Domain Adaptation module. Takes feature maps from the backbone
+    Domain Adaptation module. 
+    Currently support image-level domain alignment
     """
-    def __init__(self, cfg, cin):
+    def __init__(self, cfg, in_channels, grl_w=1.0):
         super(DAImgModule, self).__init__()
 
-    def forward(self, img_features):
+        self.cin = in_channels
+        self.da_img_head = netD(self.cin)
+        # scale for img level da loss, default 0.5
+        self.da_img_scale = cfg.MODEL.DA.IMG_LOSS_SCALE 
+        # scale for overall da loss, default 1.0
+        self.da_scale = 1.0 
+
+        self.grl = GradientScalarLayer(-1.0 * grl_w)
+        self.FL = FocalLoss(gamma=0.5)
+
+    def forward(self, features, img_feat_level, domain):
         if self.training:
             losses = {}
+            img_feat = features[img_feat_level]
+            out_d = self.da_img_head(
+              self.grl(img_feat)
+            )
+            # print(out_d.size()) # torch.Size([1, 2])
+            if domain == 'source':
+                d_label = torch.zeros(out_d.size(0)).long().cuda()
+            else:
+                d_label = torch.ones(out_d.size(0)).long().cuda()
+            
+            # print(out_d, d_label)
+            img_d_loss = self.da_img_scale * self.FL(out_d, d_label) 
+            # loss = torch.ones((1)).cuda()# sigmoid_focal_loss(x, d_label)
+            losses = {'loss_img_d': img_d_loss * self.da_scale}
             return losses
+
         return {}
 
 
-def build_da_img_head(cfg, input_shape):
-    in_channels = input_shape[cfg.MODEL.SS.FEAT_LEVEL].channels
+def build_da_head(cfg, input_shape):
+    in_channels = input_shape[cfg.MODEL.DA.IMG_FEAT_LEVEL].channels
     return DAImgModule(cfg, in_channels)

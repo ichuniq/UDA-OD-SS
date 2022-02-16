@@ -82,3 +82,11 @@ _C.DATASETS.CROSS_DOMAIN = False
 _C.DATASETS.TRAIN = ()
 _C.DATASETS.TRAIN_SOURCE = ()
 _C.DATASETS.TRAIN_TARGET = ()
+
+# ---------------------------------------------------------------------------- #
+# Domain Discriminator options
+# ---------------------------------------------------------------------------- #
+_C.MODEL.DA = CN()
+_C.MODEL.DA.DA_ONLY = False
+_C.MODEL.DA.IMG_FEAT_LEVEL = "res4"
+_C.MODEL.DA.IMG_LOSS_SCALE = 1.0

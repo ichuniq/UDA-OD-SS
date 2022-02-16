@@ -7,7 +7,7 @@ from detectron2.modeling.backbone import build_backbone
 from detectron2.modeling.meta_arch import META_ARCH_REGISTRY
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
-from detectron2.modeling.roi_heads import build_roi_heads
+#from detectron2.modeling.roi_heads import ROI_HEADS_REGISTRY, build_roi_heads
 
 from detectron2.structures import ImageList
 from detectron2.utils.logger import log_first_n
@@ -15,6 +15,7 @@ from detectron2.utils.logger import log_first_n
 import logging
 import math
 
+from ..roi_heads import build_roi_heads 
 from ..domain_alignment import build_da_head
 
 __all__ = ["DARCNN"]
@@ -35,13 +36,18 @@ class DARCNN(nn.Module):
             cfg, self.backbone.output_shape()
         )
         self.from_config(cfg)
+
+        # print(ROI_HEADS_REGISTRY)
         self.roi_heads = build_roi_heads(cfg, self.backbone.output_shape())
 
-        self.da_img_head = 1
+        self.da_head = build_da_head(cfg, self.backbone.output_shape())
 
         self.to(self.device)
 
     def from_config(self, cfg):
+        # only train/eval the da branch for debugging.
+        self.da_only = cfg.MODEL.DA.DA_ONLY
+        self.img_feat_level = cfg.MODEL.DA.IMG_FEAT_LEVEL  # use res4 for now
 
         assert len(cfg.MODEL.PIXEL_MEAN) == len(cfg.MODEL.PIXEL_STD)
         num_channels = len(cfg.MODEL.PIXEL_MEAN)
@@ -80,9 +86,14 @@ class DARCNN(nn.Module):
             gt_instances = None
         # print(images.tensor.size(), images.image_sizes)
 
-        features = self.backbone(images.tensor)
-        # print(features['res4'].size())
+        features = self.backbone(images.tensor) 
+        # print(features['res2'].size()) # torch.Size([1, 256, 164, 334])
+        # print(features['res4'].size()) # torch.Size([1, 1024, 41, 84])
 
+        # img features to img-level domain discriminator
+        da_losses = self.da_head(features, self.img_feat_level, domain)
+        losses.update(da_losses)
+        
         if self.proposal_generator is not None:
             proposals, proposal_losses = self.proposal_generator(
                 images, features, gt_instances, domain=='source'
@@ -99,6 +110,7 @@ class DARCNN(nn.Module):
             images, features, proposals, gt_instances, domain=='source'
         )
 
+        
         losses.update(detector_losses)
         losses.update(proposal_losses)
 

@@ -295,6 +295,7 @@ class DefaultTrainer(SimpleTrainer):
                 model,
                 device_ids=[comm.get_local_rank()],
                 broadcast_buffers=False,
+                # find_unused_parameters=True
             )
 
         if self.cross_domain:

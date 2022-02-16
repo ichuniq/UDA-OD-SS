@@ -1,3 +1,6 @@
+"""
+FRCNN w/ simple img-level domain adversarial training
+"""
 _BASE_: "../Base-RCNN-C4.yaml"
 MODEL:
   META_ARCHITECTURE: "DARCNN"
@@ -5,11 +8,15 @@ MODEL:
   MASK_ON: False
   RESNETS:
     DEPTH: 101
+    # OUT_FEATURES: ["res2", "res3", "res4"]
   ROI_HEADS:
     NUM_CLASSES: 8
     NAME: "TLRes5ROIHeads"
   PROPOSAL_GENERATOR:
     NAME: "TLRPN"
+  DA:
+    IMG_FEAT_LEVEL: "res4"
+    IMG_LOSS_SCALE: 0.5
 DATASETS:
   CROSS_DOMAIN: True
   TRAIN_SOURCE: ("cityscapes_train",)
@@ -18,8 +25,9 @@ DATASETS:
 SOLVER:
   IMS_PER_BATCH: 4
   BASE_LR: 0.005
-  STEPS: (6000, 8000)
-  MAX_ITER: 10000
+  STEPS: (12000, )
+  MAX_ITER: 16000
+  WARMUP_ITERS: 100
 INPUT:
   MIN_SIZE_TRAIN: (800,)
   CROP:
