@@ -7,24 +7,25 @@ from detectron2.modeling.backbone import build_backbone
 from detectron2.modeling.meta_arch import META_ARCH_REGISTRY
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
-#from detectron2.modeling.roi_heads import ROI_HEADS_REGISTRY, build_roi_heads
 
+# from detectron2.modeling.roi_heads import build_roi_heads
 from detectron2.structures import ImageList
 from detectron2.utils.logger import log_first_n
 
 import logging
 import math
 
+from ..self_supervised import build_ss_head
 from ..roi_heads import build_roi_heads 
 from ..domain_alignment import build_da_head
 
-__all__ = ["DARCNN"]
+__all__ = ["DASSRCNN"]
 
 
 @META_ARCH_REGISTRY.register()
-class DARCNN(nn.Module):
+class DASSRCNN(nn.Module):
     """
-    Cross-domain detection
+    Cross-domain detection + self-supervision task
     """
 
     def __init__(self, cfg):
@@ -36,17 +37,24 @@ class DARCNN(nn.Module):
             cfg, self.backbone.output_shape()
         )
         self.from_config(cfg)
-
-        # print(ROI_HEADS_REGISTRY)
         self.roi_heads = build_roi_heads(cfg, self.backbone.output_shape())
 
         self.da_head = build_da_head(cfg, self.backbone.output_shape())
 
+        self.ss_head = build_ss_head(
+            # cfg, self.backbone.bottom_up.output_shape()   # for Res-FPN
+            cfg, self.backbone.output_shape()
+        )
+
+        for i in range(len(self.ss_head)):
+            setattr(self, "ss_head_{}".format(i), self.ss_head[i])
+
         self.to(self.device)
 
     def from_config(self, cfg):
-        # only train/eval the da branch for debugging.
-        self.da_only = cfg.MODEL.DA.DA_ONLY
+        # only train/eval the ss branch for debugging.
+        self.ss_only = cfg.MODEL.SS.ONLY
+        self.feat_level = cfg.MODEL.SS.FEAT_LEVEL  # res4
         self.img_feat_level = cfg.MODEL.DA.IMG_FEAT_LEVEL  # use res4 for now
 
         assert len(cfg.MODEL.PIXEL_MEAN) == len(cfg.MODEL.PIXEL_STD)
@@ -65,20 +73,36 @@ class DARCNN(nn.Module):
 
     def forward(self, batched_inputs, domain='source'):
         """
-        Args:
-            batched_inputs
-            labeled (string, optional): whether has ground-truth label. Default: 'source'
-        Returns:
-            losses
+        Training methods, which jointly train the detector and the
+        self-supervised task.
+
+        For UDA settings, calculate detection loss and self-supervised 
+        loss for the source domain, and only with the self-supervised 
+        loss on the target domain
         """
         if not self.training:
             return self.inference(batched_inputs)
-        
         losses = {}
+        accuracies = {}
+        # torch.save(batched_inputs, "inputs.pt")
+        for i in range(len(self.ss_head)):
+            """Using images as the input to SS tasks."""
+            head = getattr(self, "ss_head_{}".format(i))
+            if head.input != "images":
+                continue
+            out, tar, ss_losses = head(
+                # batched_inputs, self.backbone.bottom_up, self.feat_level # for Res-FPN
+                batched_inputs, self.backbone, self.feat_level
+            )  # attach new parameters
+            losses.update(ss_losses)
+            acc = (out.argmax(axis=1) == tar).float().mean().item() * 100
+            accuracies["accuracy_ss_{}".format(head.name)] = {
+                "accuracy": acc,
+                "num": len(tar),
+            }
 
         # start detection
         images = self.preprocess_image(batched_inputs)
-        # only load gt instances for source domain data
         if "instances" in batched_inputs[0] and domain == 'source':
             gt_instances = [
                 x["instances"].to(self.device) for x in batched_inputs
@@ -86,11 +110,8 @@ class DARCNN(nn.Module):
         else:
             gt_instances = None
         # print(images.tensor.size(), images.image_sizes)
-
-        features = self.backbone(images.tensor) 
-        # print(features['res2'].size()) # torch.Size([1, 256, 164, 334])
-        # print(features['res4'].size()) # torch.Size([1, 1024, 41, 84])
-
+        features = self.backbone(images.tensor)
+        
         # img features to img-level domain discriminator
         da_losses = self.da_head(features, self.img_feat_level, domain)
         losses.update(da_losses)
@@ -111,10 +132,9 @@ class DARCNN(nn.Module):
             images, features, proposals, gt_instances, domain =='source'
         )
 
-        
+
         losses.update(detector_losses)
         losses.update(proposal_losses)
-
 
         for k, v in losses.items():
             try:

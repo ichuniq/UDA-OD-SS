@@ -24,7 +24,7 @@ __all__ = ["SSRCNN"]
 @META_ARCH_REGISTRY.register()
 class SSRCNN(nn.Module):
     """
-    Detection + self-supervised
+    Detection + self-supervision task
     """
 
     def __init__(self, cfg):

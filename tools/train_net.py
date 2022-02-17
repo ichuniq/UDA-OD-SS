@@ -21,6 +21,7 @@ from src.config import get_cfg
 from src import data
 from src.engine import default_argument_parser, DefaultTrainer
 from src import modeling
+from src.evaluation import COCOEvaluator_AP50
 
 
 class Trainer(DefaultTrainer):
@@ -44,7 +45,8 @@ class Trainer(DefaultTrainer):
         evaluator_list = []
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
         if evaluator_type in ["coco", "coco_panoptic_seg"]:
-            evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
+            # evaluator_list.append(COCOEvaluator(dataset_name, cfg, True, output_folder))
+            evaluator_list.append(COCOEvaluator_AP50(dataset_name, cfg, True, output_folder))
         if len(evaluator_list) == 0:
             raise NotImplementedError(
                 "no Evaluator for the dataset {} with the type {}".format(
