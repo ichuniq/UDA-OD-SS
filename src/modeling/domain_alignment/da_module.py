@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .build import DAHEAD_REGISTRY
 from .da_utils import GradientScalarLayer, FocalLoss
 from fvcore.nn import sigmoid_focal_loss, sigmoid_focal_loss_jit
 
@@ -18,17 +19,18 @@ def conv1x1(in_planes, out_planes, stride=1):
 
 class netD_pixel(nn.Module): 
     """ Local (strong) domain classifier """
-    def __init__(self, context=False):
+    def __init__(self, cin, context=False):
         super(netD_pixel, self).__init__()
-        self.conv1 = conv1x1(256, 256)
+        self.conv1 = conv1x1(cin, 256)
+        # self.conv1 = conv1x1(256, 256)
         self.conv2 = conv1x1(256, 128)
         self.conv3 = conv1x1(128, 1)
 
         for l in [self.conv1, self.conv2, self.conv3]:
             torch.nn.init.normal_(l.weight, std=0.01)
-            torch.nn.init.constant_(l.bias, 0)
-        
+
         self.context = context
+
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
@@ -72,8 +74,7 @@ class netD(nn.Module):
 
 class DAImgModule(torch.nn.Module):
     """
-    Domain Adaptation module. 
-    Currently support image-level domain alignment
+    Image-level domain adversarial training module
     """
     def __init__(self, cfg, in_channels, grl_w=1.0):
         super(DAImgModule, self).__init__()
@@ -110,6 +111,70 @@ class DAImgModule(torch.nn.Module):
         return {}
 
 
-def build_da_head(cfg, input_shape):
+@DAHEAD_REGISTRY.register()
+def build_img_da_head(cfg, input_shape):
     in_channels = input_shape[cfg.MODEL.DA.IMG_FEAT_LEVEL].channels
     return DAImgModule(cfg, in_channels)
+
+
+class DASWModule(torch.nn.Module):
+    """
+    Pixels & Image-level domain adversarial training module like Stong-Weak DA 
+    but currently without the context vector regularization)
+    """
+    def __init__(self, cfg, pix_cin, img_cin, grl_w=1.0):
+        super(DASWModule, self).__init__()
+
+        self.da_pix_head = netD_pixel(pix_cin)
+        self.da_pix_scale = 0.5 #cfg.MODEL.DA.PIX_LOSS_SCALE 
+
+        self.da_img_head = netD(img_cin)
+        # scale for img level da loss, default 0.5
+        self.da_img_scale = cfg.MODEL.DA.IMG_LOSS_SCALE 
+
+        # scale for overall da loss, default 1.0
+        self.da_scale = 1.0 
+
+        self.grl = GradientScalarLayer(-1.0 * grl_w)
+        self.FL = FocalLoss(gamma=0.5)
+
+    def forward(self, features, pix_feat_level, img_feat_level, domain):
+        if self.training:
+            losses = {}
+
+            # local
+            pix_feat = features[pix_feat_level]
+            out_d_pixel = self.da_pix_head(
+              self.grl(pix_feat)
+            )
+
+            # global
+            img_feat = features[img_feat_level]
+            out_d = self.da_img_head(
+              self.grl(img_feat)
+            )
+            # print(out_d.size()) # torch.Size([1, 2])
+            if domain == 'source':
+                d_label = torch.zeros(out_d.size(0)).long().cuda()
+                pix_d_loss = torch.mean(out_d_pixel ** 2)
+            else:
+                d_label = torch.ones(out_d.size(0)).long().cuda()
+                pix_d_loss = torch.mean((1 - out_d_pixel) ** 2)
+            
+            # print(out_d, d_label)
+            pix_d_loss = self.da_pix_scale * pix_d_loss
+            img_d_loss = self.da_img_scale * self.FL(out_d, d_label) 
+            
+            losses = {
+                'loss_pix_d': pix_d_loss * self.da_scale,
+                'loss_img_d': img_d_loss * self.da_scale
+            }
+            return losses
+
+        return {}
+
+@DAHEAD_REGISTRY.register()
+def build_sw_da_head(cfg, input_shape):
+    pix_in_channels = input_shape[cfg.MODEL.DA.PIX_FEAT_LEVEL].channels
+    img_in_channels = input_shape[cfg.MODEL.DA.IMG_FEAT_LEVEL].channels
+    return DASWModule(cfg, pix_in_channels, img_in_channels)

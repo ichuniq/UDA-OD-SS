@@ -87,6 +87,9 @@ _C.DATASETS.TRAIN_TARGET = ()
 # Domain Discriminator options
 # ---------------------------------------------------------------------------- #
 _C.MODEL.DA = CN()
+_C.MODEL.DA.NAME = "build_img_da_head"
 _C.MODEL.DA.DA_ONLY = False
+_C.MODEL.DA.PIX_FEAT_LEVEL = "res2"
 _C.MODEL.DA.IMG_FEAT_LEVEL = "res4"
-_C.MODEL.DA.IMG_LOSS_SCALE = 1.0
+_C.MODEL.DA.PIX_LOSS_SCALE = 0.5
+_C.MODEL.DA.IMG_LOSS_SCALE = 0.5

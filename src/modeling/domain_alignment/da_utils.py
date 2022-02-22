@@ -64,7 +64,7 @@ class FocalLoss(nn.Module):
         if self.sigmoid:
             P = F.sigmoid(inputs)
             if targets == 0:
-                probs = 1 - P#(P * class_mask).sum(1).view(-1, 1)
+                probs = 1 - P
                 log_p = probs.log()
                 batch_loss = - (torch.pow((1 - probs), self.gamma)) * log_p
             if targets == 1:

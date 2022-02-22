@@ -46,7 +46,9 @@ class DARCNN(nn.Module):
 
     def from_config(self, cfg):
         # only train/eval the da branch for debugging.
-        self.da_only = cfg.MODEL.DA.DA_ONLY
+        # self.da_only = cfg.MODEL.DA.DA_ONLY
+        self.da_name = cfg.MODEL.DA.NAME
+        self.pix_feat_level = cfg.MODEL.DA.PIX_FEAT_LEVEL  # res2
         self.img_feat_level = cfg.MODEL.DA.IMG_FEAT_LEVEL  # use res4 for now
 
         assert len(cfg.MODEL.PIXEL_MEAN) == len(cfg.MODEL.PIXEL_STD)
@@ -92,7 +94,10 @@ class DARCNN(nn.Module):
         # print(features['res4'].size()) # torch.Size([1, 1024, 41, 84])
 
         # img features to img-level domain discriminator
-        da_losses = self.da_head(features, self.img_feat_level, domain)
+        if self.da_name == "build_sw_da_head":
+            da_losses = self.da_head(features, self.pix_feat_level, self.img_feat_level, domain)
+        else:
+            da_losses = self.da_head(features, self.img_feat_level, domain)
         losses.update(da_losses)
         
         if self.proposal_generator is not None:

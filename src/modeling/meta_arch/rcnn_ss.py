@@ -124,7 +124,8 @@ class SSRCNN(nn.Module):
                 images, features, proposals, gt_instances
             )
 
-            if isinstance(detector_losses, tuple):
+            # print(type(detector_losses))
+            if isinstance(detector_losses, tuple): # usually not used
                 detector_losses, box_features = detector_losses
 
                 for i in range(len(self.ss_head)):
